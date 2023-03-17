@@ -22,6 +22,9 @@
 
 #include "keymap.h"
 
+#define LOWER MO(_LOWER)
+#define RAISE MO(_RAISE)
+ //Associate our tap dance key with its functionality
 
 enum planck_layers {
   _QWERTY,
@@ -43,20 +46,29 @@ enum planck_keycodes {
   EXT_PLV
 };
 
-enum {
+typedef enum td_state_t {
+    TD_NONE,
+    TD_UNKNOWN,
+    TD_SINGLE_TAP,
+    TD_SINGLE_HOLD,
+    TD_DOUBLE_TAP,
     TD_LOWER,
     TD_UPPER,
     TD_MOVE
-};
+} td_state_t;
 
-#define LOWER MO(_LOWER)
-#define RAISE MO(_RAISE)
- //Associate our tap dance key with its functionality
-qk_tap_dance_action_t tap_dance_actions[] = {
-     [TD_LOWER] = ACTION_TAP_DANCE_LAYER_TOGGLE(LOWER, _LOWER),
-     [TD_UPPER] = ACTION_TAP_DANCE_LAYER_TOGGLE(RAISE, _RAISE),
-     [TD_MOVE] = ACTION_TAP_DANCE_LAYER_TOGGLE(RAISE, _MOVE),
-};
+typedef struct {
+    bool is_press_action;
+    td_state_t state;
+} td_tap_t;
+
+// Declare the functions to be used with your tap dance key(s)
+// Function associated with all tap dances
+td_state_t cur_dance(qk_tap_dance_state_t *state);
+
+// Functions associated with individual tap dances
+void ql_finished(qk_tap_dance_state_t *state, void *user_data);
+void ql_reset(qk_tap_dance_state_t *state, void *user_data);
 
 const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 
@@ -75,7 +87,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
     KC_TAB,  KC_Q,    KC_W,    KC_E,    KC_R,    KC_T,    KC_Y,    KC_U,    KC_I,    KC_O,    KC_P,    KC_BSPC,
     KC_ESC,  KC_A,    KC_S,    KC_D,    KC_F,    KC_G,    KC_H,    KC_J,    KC_K,    KC_L,    KC_SCLN, KC_QUOT,
     KC_LSFT, KC_Z,    KC_X,    KC_C,    KC_V,    KC_B,    KC_N,    KC_M,    KC_COMM, KC_DOT,  KC_SLSH, KC_ENT ,
-    KC_RALT, KC_LCTL, KC_LALT, KC_LGUI, TT(_LOWER),   KC_SPC,  KC_SPC,  TT(_MOVE),   KC_LEFT, KC_DOWN, KC_UP,   KC_RGHT
+    KC_RALT, KC_LCTL, KC_LALT, KC_LGUI, TT(_LOWER),   KC_SPC,  KC_SPC,  TD(TD_MOVE),   KC_LEFT, KC_DOWN, KC_UP,   KC_RGHT
 ),
 
 /* Colemak
@@ -388,4 +400,69 @@ bool music_mask_user(uint16_t keycode) {
     default:
       return true;
   }
+}
+
+// Determine the current tap dance state
+td_state_t cur_dance(qk_tap_dance_state_t *state) {
+    if (state->count == 1) {
+        if (!state->pressed) return TD_SINGLE_TAP;
+        else return TD_SINGLE_HOLD;
+    } else if (state->count == 2) return TD_DOUBLE_TAP;
+    else return TD_UNKNOWN;
+}
+
+// Initialize tap structure associated with example tap dance key
+static td_tap_t ql_tap_state = {
+    .is_press_action = true,
+    .state = TD_NONE
+};
+
+// Functions that control what our tap dance key does
+void ql_finished(qk_tap_dance_state_t *state, void *user_data) {
+    ql_tap_state.state = cur_dance(state);
+    switch (ql_tap_state.state) {
+        case TD_SINGLE_TAP:
+            tap_code(_RAISE);
+            break;
+        case TD_SINGLE_HOLD:
+            layer_on(_RAISE);
+            break;
+        case TD_DOUBLE_TAP:
+            // Check to see if the layer is already set
+            if (layer_state_is(_MOVE)) {
+                // If already set, then switch it off
+                layer_off(_MOVE);
+            } else {
+                // If not already set, then switch the layer on
+                layer_on(_MOVE);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+void ql_reset(qk_tap_dance_state_t *state, void *user_data) {
+    // If the key was held down and now is released then switch off the layer
+    if (ql_tap_state.state == TD_SINGLE_HOLD) {
+        layer_off(_RAISE);
+    }
+    ql_tap_state.state = TD_NONE;
+}
+
+// Associate our tap dance key with its functionality
+qk_tap_dance_action_t tap_dance_actions[] = {
+     [TD_LOWER] = ACTION_TAP_DANCE_LAYER_TOGGLE(LOWER, _LOWER),
+     [TD_UPPER] = ACTION_TAP_DANCE_LAYER_TOGGLE(RAISE, _RAISE),
+     [TD_MOVE] = ACTION_TAP_DANCE_FN_ADVANCED(NULL, ql_finished, ql_reset)
+};
+
+// Set a long-ish tapping term for tap-dance keys
+uint16_t get_tapping_term(uint16_t keycode, keyrecord_t *record) {
+    switch (keycode) {
+        case QK_TAP_DANCE ... QK_TAP_DANCE_MAX:
+            return 275;
+        default:
+            return TAPPING_TERM;
+    }
 }
